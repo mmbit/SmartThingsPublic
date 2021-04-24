@@ -15,19 +15,29 @@ import groovy.json.JsonOutput
 import physicalgraph.zigbee.zcl.DataType
 
 metadata {
-	definition(name: "ZigBee Window Shade Battery", namespace: "smartthings", author: "SmartThings", ocfDeviceType: "oic.d.blind", mnmn: "SmartThings", vid: "generic-shade-2") {
+	definition(name: "ZigBee Window Shade Battery", namespace: "smartthings", author: "SmartThings", ocfDeviceType: "oic.d.blind", mnmn: "SmartThings", vid: "generic-shade-3") {
 		capability "Actuator"
 		capability "Battery"
 		capability "Configuration"
 		capability "Refresh"
 		capability "Window Shade"
+		capability "Window Shade Preset"
 		capability "Health Check"
 		capability "Switch Level"
 
 		command "pause"
 
-		fingerprint manufacturer: "IKEA of Sweden", model: "KADRILJ roller blind", deviceJoinName: "IKEA KADRILJ Blinds" // raw description 01 0104 0202 00 09 0000 0001 0003 0004 0005 0020 0102 1000 FC7C 02 0019 1000
-		fingerprint manufacturer: "IKEA of Sweden", model: "FYRTUR block-out roller blind", deviceJoinName: "IKEA FYRTUR Blinds" // raw description 01 0104 0202 01 09 0000 0001 0003 0004 0005 0020 0102 1000 FC7C 02 0019 1000
+		// IKEA
+		fingerprint manufacturer: "IKEA of Sweden", model: "KADRILJ roller blind", deviceJoinName: "IKEA Window Treatment" // raw description 01 0104 0202 00 09 0000 0001 0003 0004 0005 0020 0102 1000 FC7C 02 0019 1000 //IKEA KADRILJ Blinds
+		fingerprint manufacturer: "IKEA of Sweden", model: "FYRTUR block-out roller blind", deviceJoinName: "IKEA Window Treatment" // raw description 01 0104 0202 01 09 0000 0001 0003 0004 0005 0020 0102 1000 FC7C 02 0019 1000 //IKEA FYRTUR Blinds
+
+		// Yookee yooksmart
+		fingerprint inClusters: "0000,0001,0003,0004,0005,0102", outClusters: "0019", manufacturer: "Yookee", model: "D10110", deviceJoinName: "Yookee Window Treatment"
+		fingerprint inClusters: "0000,0001,0003,0004,0005,0102", outClusters: "0019", manufacturer: "yooksmart", model: "D10110", deviceJoinName: "yooksmart Window Treatment"
+	}
+
+	preferences {
+		input "preset", "number", title: "Preset position", description: "Set the window shade preset position", defaultValue: 50, range: "1..100", required: false, displayDuringSetup: false
 	}
 
 	tiles(scale: 2) {
@@ -43,6 +53,9 @@ metadata {
 		standardTile("contPause", "device.switch", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
 			state "pause", label:"", icon:'st.sonos.pause-btn', action:'pause', backgroundColor:"#cccccc"
 		}
+		standardTile("presetPosition", "device.presetPosition", width: 2, height: 2, decoration: "flat") {
+			state "default", label: "Preset", action:"presetPosition", icon:"st.Home.home2"
+		}
 		standardTile("refresh", "device.refresh", inactiveLabel: false, decoration: "flat", width: 2, height: 1) {
 			state "default", label:"", action:"refresh.refresh", icon:"st.secondary.refresh"
 		}
@@ -57,7 +70,7 @@ metadata {
 		}
 
 		main "windowShade"
-		details(["windowShade", "contPause", "shadeLevel", "levelSliderControl", "refresh", "batteryLevel"])
+		details(["windowShade", "contPause", "presetPosition", "shadeLevel", "levelSliderControl", "refresh", "batteryLevel"])
 	}
 }
 
@@ -79,6 +92,7 @@ private List<Map> collectAttributes(Map descMap) {
 	if (descMap.additionalAttrs) {
 		descMaps.addAll(descMap.additionalAttrs)
 	}
+
 	return descMaps
 }
 
@@ -176,12 +190,20 @@ def setLevel(data, rate = null) {
 	} else {
 		cmd = zigbee.command(zigbee.LEVEL_CONTROL_CLUSTER, COMMAND_MOVE_LEVEL_ONOFF, zigbee.convertToHexString(Math.round(data * 255 / 100), 2))
 	}
-	cmd
+	return cmd
 }
 
 def pause() {
 	log.info "pause()"
+	// If the window shade isn't moving when we receive a pause() command then just echo back the current state for the mobile client.
+	if (device.currentValue("windowShade") != "opening" && device.currentValue("windowShade") != "closing") {
+		sendEvent(name: "windowShade", value: device.currentValue("windowShade"), isStateChange: true, displayed: false)
+	}
 	zigbee.command(CLUSTER_WINDOW_COVERING, COMMAND_PAUSE)
+}
+
+def presetPosition() {
+    setLevel(preset ?: 50)
 }
 
 /**
@@ -220,6 +242,7 @@ def configure() {
 	}
 
 	if (reportsBatteryPercentage()) {
+
 		cmds += zigbee.configureReporting(zigbee.POWER_CONFIGURATION_CLUSTER, BATTERY_PERCENTAGE_REMAINING, DataType.UINT8, 30, 21600, 0x01)
 	}
 
@@ -255,7 +278,7 @@ private List readDeviceBindingTable() {
 }
 
 def supportsLiftPercentage() {
-	isIkeaKadrilj() || isIkeaFyrtur()
+	isIkeaKadrilj() || isIkeaFyrtur() || isYooksmartOrYookee()
 }
 
 def shouldInvertLiftPercentage() {
@@ -272,4 +295,8 @@ def isIkeaKadrilj() {
 
 def isIkeaFyrtur() {
 	device.getDataValue("model") == "FYRTUR block-out roller blind"
+}
+
+def isYooksmartOrYookee() {
+	device.getDataValue("model") == "D10110"
 }
